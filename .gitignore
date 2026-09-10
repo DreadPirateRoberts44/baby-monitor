@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Raw/processed audio datasets (large, not meant to live in git)
+data/
+archive.zip
+archive/
+
+# Generated model artifacts, exports, and evaluation plots
+output/
+pi/models/
+
+# Local runtime state -- per-device data, not something to commit.
+pi/care_events.sqlite      # caregiver-logged feed/change events (care_events.py)
+pi/cry_history.sqlite      # completed crying sessions (cry_history.py)
+pi/device_events.sqlite    # monitor startup/shutdown history (device_events.py)
+pi/prediction_state.sqlite # app-controlled pause/resume flag (prediction_state.py)
+
+# ESP32 firmware config -- holds your WiFi password. Copy
+# pi/firmware/button_device/config.h.example to config.h and fill it in.
+pi/firmware/button_device/config.h
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

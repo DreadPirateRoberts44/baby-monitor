@@ -1,0 +1,21 @@
+# Pi runtime dependencies -- deliberately minimal, no full TensorFlow,
+# tensorflow_hub, or librosa (those are training-time only, see the repo
+# root requirements.txt). Everything here should install cleanly on a
+# Raspberry Pi OS (arm64) with standard pip.
+
+tflite-runtime>=2.14; platform_machine == "aarch64" or platform_machine == "armv7l"
+# On non-ARM dev machines, tflite-runtime wheels are less consistently
+# available -- fall back to full tensorflow for local testing of this
+# pi/ code (inference.py handles both via a try/except import).
+tensorflow>=2.15; platform_machine != "aarch64" and platform_machine != "armv7l"
+
+numpy>=1.24
+scipy>=1.10
+sounddevice>=0.4
+
+# MQTT client, used by both buttons_mqtt.py (subscribes to the ESP32
+# button device) and notify.py (publishes cry alerts/updates to the app).
+# Requires a local MQTT broker (Mosquitto) running on the Pi -- see
+# README.md Setup. Pure-Python client, installs fine on any platform
+# (including this dev machine, for local testing).
+paho-mqtt>=2.0

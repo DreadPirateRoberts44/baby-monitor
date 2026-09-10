@@ -3,7 +3,7 @@ import tensorflow as tf
 
 import config
 from data import get_datasets
-from model import build_model
+from model import build_classifier_head
 
 
 def main():
@@ -16,10 +16,13 @@ def main():
     with open(config.LABELS_PATH, "w") as f:
         f.write("\n".join(class_names))
 
-    model = build_model(input_shape, num_classes=len(class_names))
+    model = build_classifier_head(config.EMBEDDING_DIM, num_classes=len(class_names))
     model.compile(
         optimizer=tf.keras.optimizers.Adam(config.LEARNING_RATE),
-        loss="sparse_categorical_crossentropy",
+        # label smoothing keeps the softmax from saturating near 1.0 on every
+        # prediction, so max-probability stays a meaningful confidence signal
+        # for threshold-based rejection at inference time
+        loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=config.LABEL_SMOOTHING),
         metrics=["accuracy"],
     )
     model.summary()

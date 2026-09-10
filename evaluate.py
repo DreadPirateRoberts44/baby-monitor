@@ -14,7 +14,7 @@ def main():
     y_true, y_pred = [], []
     for x_batch, y_batch in test_ds:
         preds = model.predict(x_batch, verbose=0)
-        y_true.extend(y_batch.numpy())
+        y_true.extend(np.argmax(y_batch.numpy(), axis=1))
         y_pred.extend(np.argmax(preds, axis=1))
 
     print(classification_report(y_true, y_pred, target_names=class_names))

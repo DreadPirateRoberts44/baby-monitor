@@ -1,0 +1,60 @@
+// Copy this file to config.h and fill in your actual values.
+// config.h is gitignored (it's local-machine setup, not meant to be shared)
+// -- config.h.example is the template that IS committed.
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// WiFi credentials are NOT stored here -- see WIFI_PROVISIONING.md. On
+// first boot (or after a long-press reset), the device puts up its own
+// "BabyMonitor-Setup" WiFi network; connect to it from a phone and a
+// captive portal page lets you pick the real network and enter its
+// password. WiFiManager saves that to the ESP32's flash (NVS) and
+// reconnects to it automatically on every future boot -- including after
+// moving to a different network (grandma's house, a new router, etc.),
+// as long as you re-run the setup portal (hold both buttons at boot).
+#define WIFI_AP_NAME "BabyMonitor-Setup"
+#define WIFI_CONNECT_TIMEOUT_MS 15000
+// How long the setup portal stays open (waiting for someone to connect
+// and configure it) before giving up and rebooting to retry with
+// whatever's saved. Only relevant on first-ever setup or an intentional
+// reset -- doesn't affect normal reconnects to an already-known network.
+#define WIFI_PORTAL_TIMEOUT_S 180
+
+// The Pi's address on the local network. A plain IP (e.g. "192.168.1.42")
+// works but can change if the Pi's DHCP lease renews with a different
+// address -- setting a static/reserved IP for the Pi in your router's
+// settings is recommended so this never needs updating. Alternatively,
+// if your router supports mDNS/.local hostnames and the Pi has avahi
+// running (default on Raspberry Pi OS), "raspberrypi.local" often works
+// without any router configuration -- try it first, fall back to a
+// static IP if it's unreliable on your network.
+#define MQTT_BROKER_HOST "raspberrypi.local"
+#define MQTT_BROKER_PORT 1883
+
+// Must match settings.MQTT_BUTTON_TOPIC in pi/settings.py.
+#define MQTT_BUTTON_TOPIC "babymonitor/button"
+
+// Unique-ish name for this device, sent with every message and used as
+// the MQTT client ID. Change if you ever have more than one button device.
+#define DEVICE_ID "babymonitor-buttons-01"
+
+// GPIO pins the two buttons are wired to (button between pin and GND;
+// INPUT_PULLUP is set in the .ino, so no external resistor needed).
+// These defaults avoid ESP32 boot-strapping pins (0, 2, 5, 12, 15) which
+// can interfere with the board's startup if pulled low at boot.
+#define FEED_BUTTON_PIN 4
+#define CHANGE_BUTTON_PIN 16
+
+// Offline queue (see button_device.ino's queue logic): if WiFi/the MQTT
+// broker is unreachable when a button is pressed, the press is held in
+// RAM and retried instead of dropped. MAX_QUEUE_SIZE caps how many
+// unsent presses can be held at once -- 2 buttons pressed a handful of
+// times during a real outage is the realistic worst case; sized with
+// headroom above that. RETRY_INTERVAL_MS is how often the device
+// proactively attempts to reconnect and flush the queue on its own,
+// independent of whether a button gets pressed again.
+#define MAX_QUEUE_SIZE 16
+#define RETRY_INTERVAL_MS 10000
+
+#endif
