@@ -114,10 +114,14 @@ whole `models` folder over.
 
 **Back on the Pi** (SSH session):
 ```
+sudo apt install -y python3-venv libportaudio2
 cd ~/baby-monitor/pi
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
-This may take a few minutes — it's installing `tflite-runtime`, audio
+Recent Raspberry Pi OS versions block system-wide `pip install`
+(the "externally-managed-environment" error), so the packages go in a
+virtual environment at `pi/.venv`. The services in step 5 use it. This may take a few minutes — it's installing `ai-edge-litert` (the TFLite runtime), audio
 libraries, and the MQTT client.
 
 ### 1.6 Install Mosquitto (the local MQTT broker)
@@ -139,7 +143,7 @@ been published yet). `Ctrl+C` to stop it.
 ### 1.7 Confirm the microphone is detected
 
 ```
-python capture.py
+.venv/bin/python capture.py
 ```
 This lists available audio input devices. Confirm your USB microphone
 shows up in the list. If you need to select a specific device (usually
@@ -149,7 +153,7 @@ not necessary — the default works if only one mic is plugged in), set
 ### 1.8 Run the monitor manually to confirm it works
 
 ```
-python monitor.py
+.venv/bin/python monitor.py
 ```
 You should see `Loading models...` then `Ready. Capturing...`, followed
 by a line printed every ~4 seconds showing what it currently hears
@@ -289,7 +293,7 @@ own if something crashes.
    Type=simple
    User=pi
    WorkingDirectory=/home/pi/baby-monitor/pi
-   ExecStart=/usr/bin/python3 /home/pi/baby-monitor/pi/monitor.py
+   ExecStart=/home/pi/baby-monitor/pi/.venv/bin/python /home/pi/baby-monitor/pi/monitor.py
    Restart=always
    RestartSec=5
 
@@ -313,7 +317,7 @@ own if something crashes.
    Type=simple
    User=pi
    WorkingDirectory=/home/pi/baby-monitor/pi
-   ExecStart=/usr/bin/python3 /home/pi/baby-monitor/pi/buttons_mqtt.py
+   ExecStart=/home/pi/baby-monitor/pi/.venv/bin/python /home/pi/baby-monitor/pi/buttons_mqtt.py
    Restart=always
    RestartSec=5
 
@@ -335,7 +339,7 @@ own if something crashes.
    Type=simple
    User=pi
    WorkingDirectory=/home/pi/baby-monitor/pi
-   ExecStart=/usr/bin/python3 /home/pi/baby-monitor/pi/sync_api.py
+   ExecStart=/home/pi/baby-monitor/pi/.venv/bin/python /home/pi/baby-monitor/pi/sync_api.py
    Restart=always
    RestartSec=5
 

@@ -3,10 +3,11 @@
 # root requirements.txt). Everything here should install cleanly on a
 # Raspberry Pi OS (arm64) with standard pip.
 
-tflite-runtime>=2.14; platform_machine == "aarch64" or platform_machine == "armv7l"
-# On non-ARM dev machines, tflite-runtime wheels are less consistently
-# available -- fall back to full tensorflow for local testing of this
-# pi/ code (inference.py handles both via a try/except import).
+# ai-edge-litert is Google's successor to tflite-runtime, which has no wheels
+# for Python 3.12+ (current Raspberry Pi OS).
+ai-edge-litert; platform_machine == "aarch64" or platform_machine == "armv7l"
+# On non-ARM dev machines, fall back to full tensorflow for local testing of
+# this pi/ code (inference.py handles both via a try/except import).
 tensorflow>=2.15; platform_machine != "aarch64" and platform_machine != "armv7l"
 
 numpy>=1.24

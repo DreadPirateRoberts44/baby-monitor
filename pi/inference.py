@@ -33,7 +33,7 @@ Pipeline per window:
      low-confidence suggestion tool, not a verdict, per the project's
      established framing.
 
-Uses tflite_runtime if available (the lightweight package meant for
+Uses ai_edge_litert (or legacy tflite_runtime) if available (the lightweight packages meant for
 exactly this kind of deployment); falls back to tensorflow.lite.Interpreter
 if only full TensorFlow is installed, so this also runs on a dev machine
 for testing without requiring tflite_runtime specifically.
@@ -43,10 +43,13 @@ import os
 import numpy as np
 
 try:
-    from tflite_runtime.interpreter import Interpreter
+    from ai_edge_litert.interpreter import Interpreter
 except ImportError:
-    import tensorflow as tf  # dev-machine fallback
-    Interpreter = tf.lite.Interpreter
+    try:
+        from tflite_runtime.interpreter import Interpreter
+    except ImportError:
+        import tensorflow as tf  # dev-machine fallback
+        Interpreter = tf.lite.Interpreter
 
 import settings
 from highpass import highpass_filter
