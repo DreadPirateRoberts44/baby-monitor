@@ -368,6 +368,14 @@ own if something crashes.
 
 ### Set up the shutdown button
 
+**This button does not fully cut power by itself — see the two-step
+sequence below.** It only gets the Pi to a state where it's *safe* to
+cut power; something still has to physically cut it afterward (the
+inline switch/smart plug from
+[HARDWARE_CATALOG.md](HARDWARE_CATALOG.md)). A halted-but-still-plugged-in
+Pi still draws a small trickle of standby power, same as a laptop that's
+shut down but still plugged into the wall.
+
 If using a separate physical shutdown button (not the Argon ONE V2's
 built-in one — see [ASSEMBLY.md](ASSEMBLY.md)):
 ```
@@ -378,14 +386,29 @@ instead). Add this line at the end:
 ```
 dtoverlay=gpio-shutdown
 ```
-Save, then `sudo reboot`. Pressing the button now triggers a clean
-shutdown — wait ~15-20 seconds (until the Pi's activity LED stops
-blinking) before cutting power at the switch/smart plug.
+Save, then `sudo reboot`.
 
 If using the **Argon ONE V2**'s built-in power button instead, its setup
 is a separate script — see the case's own included instructions
 (typically a one-line install command from Argon40) rather than the
-overlay above.
+overlay above. Functionally the same two-step idea applies: the button
+triggers a clean OS shutdown, it does not itself cut power.
+
+**To actually power the device off, every time** (whichever button type
+you used):
+1. Press the shutdown button once.
+2. Wait ~15-20 seconds — until the Pi's activity LED stops blinking and
+   stays off — confirming the shutdown finished.
+3. **Only then** cut power at the physical switch/smart plug. This is
+   the step that gets you to actual ~0W.
+
+Cutting power at the switch *without* pressing the shutdown button first
+is exactly the raw power cut this two-step process exists to avoid — it
+risks SD-card/database corruption if something happened to be mid-write.
+
+**To turn it back on**: restore power at the switch/plug, then the Pi
+boots normally on its own — no button press needed to turn on, only to
+shut down cleanly beforehand.
 
 ### Test that it actually recovers on its own
 

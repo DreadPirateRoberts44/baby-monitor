@@ -1,10 +1,17 @@
 """Main Pi monitor loop: capture audio -> run two-stage inference -> track
 crying sessions -> alert once at session start and once at session end,
 plus a non-alerting live update whenever the aggregated cry-reason
-estimate changes mid-session. Every completed session is also persisted
-to cry_history.py (start/end time + aggregated reason) -- only cry
-sessions, not every laugh/silence/noise window, which aren't useful
-history to review later. Entry point for the always-on monitor.
+estimate changes mid-session. A session only starts/alerts after
+settings.SESSION_START_MIN_WINDOWS consecutive confident "cry" windows
+(see session.py) -- filters out a single misclassified window (a bark, a
+static burst) before it ever reaches the app. Every completed session is
+persisted to cry_history.py (start time + the LAST confident cry in the
+episode as end time + aggregated reason + how much of it was actually
+confirmed crying vs. absorbed quiet gaps) once it actually closes
+(settings.SESSION_MERGE_WINDOW_SECONDS after the last confident cry -- see
+session.py) -- only cry sessions, not every laugh/silence/noise window,
+which aren't useful history to review later. Entry point for the
+always-on monitor.
 
 Also logs a device_events.py startup event when this starts running, and
 a shutdown event on SIGTERM (sent by systemd on both a normal service
@@ -24,7 +31,6 @@ from silencing notifications in the app.
 Usage:
     python monitor.py
 """
-import datetime
 import signal
 import sys
 import time
@@ -36,7 +42,7 @@ from device_events import log_event as log_device_event, STARTUP, SHUTDOWN
 from inference import CryPredictor
 from notify import notify_cry_started, notify_cry_ended, send_reason_update
 from prediction_state import is_paused
-from session import CrySession, CRYING
+from session import CrySession, CRYING, PENDING
 
 _shutdown_requested = False
 
@@ -48,18 +54,20 @@ def _handle_sigterm(signum, frame):
 
 def _close_session(session, reason):
     """Logs and notifies an "ended" session outside the normal update()
-    flow -- used when pausing predictions mid-session, so a session never
-    hangs open forever just because nothing is calling update() anymore
-    (predictions being paused means session.update() stops being called
-    at all, which would otherwise leave state == CRYING indefinitely)."""
+    flow -- used when pausing predictions mid-CRYING-session, so a
+    session never hangs open forever just because nothing is calling
+    session.update() anymore (predictions being paused means update()
+    stops being called at all, which would otherwise leave
+    state == CRYING indefinitely)."""
     print(f"  >> cry session force-ended ({reason}, {session.duration_seconds:.0f}s, "
           f"aggregated reason: {session.aggregated_stage2_probs})")
     notify_cry_ended(session)
     log_session(
         started_at=session.started_at_utc,
-        ended_at=datetime.datetime.now(datetime.timezone.utc),
+        ended_at=session.last_cry_at_utc,
         duration_seconds=session.duration_seconds,
         reason_probs=session.aggregated_stage2_probs,
+        confirmed_cry_seconds=session.confirmed_cry_seconds,
     )
     session.clear()
 
@@ -91,6 +99,11 @@ def run():
         if is_paused():
             if session.state == CRYING:
                 _close_session(session, reason="predictions paused")
+            elif session.state == PENDING:
+                # Never confirmed -- nothing was alerted or logged for it,
+                # so just discard the candidate rather than force-ending
+                # a "session" that was never actually started.
+                session.clear()
             if not was_paused:
                 print("Predictions paused (app request) -- capture continues, inference skipped.")
                 was_paused = True
@@ -111,7 +124,8 @@ def run():
 
         event = session.update(result)
         if event == "started":
-            print(f"  >> cry session started")
+            print(f"  >> cry session started (confirmed after "
+                  f"{settings.SESSION_START_MIN_WINDOWS} consecutive cry window(s))")
             notify_cry_started(result)
         elif event == "reason_updated":
             print(f"  >> reason estimate updated: {session.aggregated_stage2_probs}")

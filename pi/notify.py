@@ -27,9 +27,21 @@ into two kinds on purpose:
 
   ALERTS (should interrupt/notify the caregiver -- e.g. push notification,
   phone buzz):
-    - notify_cry_started: fired once when a crying session begins.
-    - notify_cry_ended: fired once when a crying session ends (after
-      settings.SESSION_END_GRACE_WINDOWS consecutive non-cry windows).
+    - notify_cry_started: fired once when a crying session is CONFIRMED
+      (settings.SESSION_START_MIN_WINDOWS consecutive confident "cry"
+      windows -- see session.py) -- not necessarily the very first window
+      that looked like a cry.
+    - notify_cry_ended: fired once a confirmed session ends (no confident
+      crying for settings.SESSION_MERGE_WINDOW_SECONDS -- see session.py).
+      This exists specifically so the app has a reliable "the episode is
+      over" signal to stop showing an active-session UI/alert state on its
+      own timeline -- without it, a caregiver who put the phone down mid-
+      session has nothing telling the app to stand down, and an app that
+      isn't independently timing out that UI state would show "crying now"
+      indefinitely. Fires up to SESSION_MERGE_WINDOW_SECONDS after the
+      caregiver likely already handled the cry, so it's intentionally a
+      quieter/lower-urgency alert than cry_started -- see PI_CONTRACT.md
+      in the app repo for how the app is expected to treat it.
 
   LIVE UPDATE (should update an already-visible session in the app WITHOUT
   a new alert -- e.g. a websocket push / silent data update to a session
@@ -44,6 +56,14 @@ into two kinds on purpose:
 No per-window calls of any kind while a session's reason estimate is
 unchanged -- see session.py's docstring for why.
 
+reason_updated and cry_ended both also carry "confirmed_cry_seconds" and
+"cry_density" (session.CrySession.confirmed_cry_seconds/.cry_density) --
+now that a session can span a long quiet gap absorbed by the merge window,
+duration_seconds alone can't tell a dense, wall-to-wall cry from a sparse
+one with a long silent stretch in the middle. cry_started omits these --
+at a fresh "started" there's only ever been confirmed crying so far, so
+cry_density would trivially read 1.0 and add nothing.
+
 Every payload also carries a "context" block (time since last feed/diaper
 change, from care_events.py). This is DELIBERATELY separate from
 stage2_probs/aggregated_stage2_probs, not blended into them -- there's no
@@ -55,9 +75,9 @@ the caregiver do that reasoning themselves. If/when enough paired data
 exists to learn a real fusion, that would replace this, not extend it.
 
 Each build_*_payload()/message also carries "event" (see below) so a
-single MQTT topic can carry all three message kinds and the app can
-branch on it -- "cry_started"/"cry_ended" are alerts, "reason_updated"
-is the live update (see module docstring above and session.py).
+single MQTT topic can carry all three message kinds and the app can branch
+on it -- "cry_started"/"cry_ended" are alerts, "reason_updated" is the
+live update (see module docstring above and session.py).
 """
 import datetime
 import json
@@ -123,18 +143,6 @@ def build_started_payload(result):
     }
 
 
-def build_ended_payload(session):
-    """session: the session.CrySession instance, read right after
-    update() returned "ended" (before session.clear())."""
-    return {
-        "event": "cry_ended",
-        "timestamp": _now(),
-        "duration_seconds": round(session.duration_seconds, 1),
-        "aggregated_stage2_probs": session.aggregated_stage2_probs,
-        "context": _context(),
-    }
-
-
 def build_reason_update_payload(session):
     """session: the session.CrySession instance, read right after
     update() returned "reason_updated"."""
@@ -143,6 +151,22 @@ def build_reason_update_payload(session):
         "timestamp": _now(),
         "duration_seconds": round(session.duration_seconds, 1),
         "aggregated_stage2_probs": session.aggregated_stage2_probs,
+        "confirmed_cry_seconds": round(session.confirmed_cry_seconds, 1),
+        "cry_density": round(session.cry_density, 3),
+        "context": _context(),
+    }
+
+
+def build_ended_payload(session):
+    """session: the session.CrySession instance, read right after
+    update() returned "ended" (before session.clear())."""
+    return {
+        "event": "cry_ended",
+        "timestamp": _now(),
+        "duration_seconds": round(session.duration_seconds, 1),
+        "aggregated_stage2_probs": session.aggregated_stage2_probs,
+        "confirmed_cry_seconds": round(session.confirmed_cry_seconds, 1),
+        "cry_density": round(session.cry_density, 3),
         "context": _context(),
     }
 
@@ -155,7 +179,8 @@ def notify_cry_started(result):
 
 
 def notify_cry_ended(session):
-    """Alert: should interrupt/notify the caregiver."""
+    """Alert: should tell the app the episode is over -- see module
+    docstring for why this exists despite firing well after the fact."""
     payload = build_ended_payload(session)
     _publish(payload)
     print(f"[notify:ALERT] published: {json.dumps(payload)}")

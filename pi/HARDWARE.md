@@ -26,16 +26,33 @@ on, not just a safety issue.
 ## Off switch
 
 To let the Pi be powered off when the baby is away (saving power/heat —
-both end up near 0W once off, so a clean shutdown and a hard power cut
-save the same amount) without risking database/SD-card corruption from
-yanking power while something's mid-write, this uses Raspberry Pi OS's
-built-in shutdown-button support (the `dtoverlay=gpio-shutdown` kernel
-overlay, wired to a momentary push-button between GPIO3 and GND) rather
-than a bare power switch. Pressing the button triggers a clean shutdown
-— same as running `sudo shutdown -h now` — no custom application code
-needed, this is a hardware/OS-config change. For the actual wiring steps
-see [docs/ASSEMBLY.md](../docs/ASSEMBLY.md); for the one-line config
-change and testing it, see [docs/INSTALL.md](../docs/INSTALL.md).
+both end up near 0W once power is actually cut, so a clean shutdown
+followed by a power cut and a raw power cut alone save the same amount
+once fully off) without risking database/SD-card corruption from yanking
+power while something's mid-write, this is a deliberate **two-step**
+process, not a single switch:
+
+1. **Press the shutdown button first.** This uses Raspberry Pi OS's
+   built-in shutdown-button support (the `dtoverlay=gpio-shutdown`
+   kernel overlay, wired to a momentary push-button between GPIO3 and
+   GND) to trigger a clean shutdown — same as running
+   `sudo shutdown -h now` — no custom application code needed, this is a
+   hardware/OS-config change. **This step alone does not cut power** —
+   the Pi halts safely (all writes flushed, safe to lose power now), but
+   still draws a small trickle of standby power while plugged in and
+   halted, same as a laptop that's shut down but still plugged in.
+2. **Then cut power** at the physical switch/smart plug (see
+   [Estimated cost/Shopping list](#shopping-list-and-cost) — this is
+   what that switch/plug is actually for). This is the step that
+   actually reaches ~0W. Waiting for step 1 to finish first (the Pi's
+   activity LED stops blinking, give it ~15-20s) before doing this is
+   what avoids the corruption risk — cutting power immediately at the
+   switch without pressing the shutdown button first would be exactly
+   the raw power cut this whole design exists to avoid.
+
+For the actual wiring steps see [docs/ASSEMBLY.md](../docs/ASSEMBLY.md);
+for the one-line config change and testing it, see
+[docs/INSTALL.md](../docs/INSTALL.md).
 
 `care_events.sqlite` (SQLite) is already reasonably crash-tolerant on
 its own via its journal, but a clean shutdown removes essentially all of

@@ -119,6 +119,8 @@ def _session_to_json(session):
         "duration_seconds": session["duration_seconds"],
         "top_reason": session["top_reason"],
         "reason_probs": session["reason_probs"],
+        "confirmed_cry_seconds": session["confirmed_cry_seconds"],
+        "cry_density": session["cry_density"],
     }
 
 

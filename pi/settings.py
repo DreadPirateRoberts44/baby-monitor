@@ -12,6 +12,7 @@ they're duplicated here rather than imported, since a mismatch would
 silently produce wrong-shaped input to the models. If you change
 config.SAMPLE_RATE or config.DURATION for a retrain, update these too.
 """
+import math
 import os
 
 # Must match config.SAMPLE_RATE / config.DURATION in the repo root.
@@ -48,14 +49,36 @@ CAPTURE_INTERVAL_SECONDS = 4.0
 # Microphone device index/name for sounddevice. None = system default input.
 AUDIO_DEVICE = None
 
-# Session tracking (see session.py): how many consecutive non-"cry" windows
-# must be seen before considering a crying session over. Set > 1 so a
-# single brief pause/gasp mid-cry (correctly classified as e.g. "silence"
-# or "uncertain" for one window) doesn't end the session and trigger a
-# spurious "cry ended" notification immediately followed by a new "cry
-# started" one. At CAPTURE_INTERVAL_SECONDS=4.0, a value of 2 means ~8s of
-# continuous non-crying before the session is considered ended.
-SESSION_END_GRACE_WINDOWS = 2
+# Session tracking (see session.py): how long, in seconds, after the LAST
+# confidently-"cry" window before a session is considered truly over. Any
+# confident "cry" detected before this gap elapses is folded into the SAME
+# session (start time unchanged, aggregated reason keeps accumulating)
+# rather than starting a new one -- e.g. baby cries, is picked up and
+# carried away from the monitor (or just pauses/settles), then cries again
+# 10 minutes later: that's one episode, not two. Set high enough to cover
+# "picked up, walked to another room, calmed down or not" -- a short gap
+# (e.g. the old ~8s grace window) reliably mistook that for two separate
+# episodes. The session's logged end time is still the LAST confident cry
+# in the episode, not whenever this window finally lapses -- see
+# session.py's last_cry_at_utc/duration_seconds.
+SESSION_MERGE_WINDOW_SECONDS = 10 * 60
+
+# Session tracking (see session.py): minimum confirmed crying, in seconds,
+# before a session is actually started/alerted. A single confident "cry"
+# window used to be enough on its own -- a 4s misclassification (a bark, a
+# static burst, anything that briefly clears STAGE1_CONFIDENCE_THRESHOLD)
+# would fire a full "started" alert. Expressed as SECONDS rather than a
+# raw window count so it means the same thing (e.g. "~6s of confirmation")
+# regardless of CAPTURE_INTERVAL_SECONDS -- SESSION_START_MIN_WINDOWS below
+# is derived from this, not set directly, so changing the capture interval
+# later doesn't silently change how much confirmation lag this adds.
+SESSION_START_MIN_SECONDS = 6.0
+
+# Derived: how many CONSECUTIVE confident-"cry" windows are needed before
+# starting/alerting a session -- see session.py. Rounds up (ceil), and
+# always at least 1, so SESSION_START_MIN_SECONDS <= CAPTURE_INTERVAL_SECONDS
+# still means "the very first window is enough", matching the old behavior.
+SESSION_START_MIN_WINDOWS = max(1, math.ceil(SESSION_START_MIN_SECONDS / CAPTURE_INTERVAL_SECONDS))
 
 # Wireless button device (ESP32, see firmware/ and buttons_mqtt.py) for
 # logging feed/diaper-change events used by care_events.py. The Pi runs

@@ -102,12 +102,25 @@ doesn't stop after 4 seconds), so `monitor.py` doesn't notify on every
 default 4s interval would otherwise be ~75 notifications).
 
 `session.py`'s `CrySession` tracks state across windows instead, and
-`monitor.py` reacts to three distinct events — deliberately split into
+`monitor.py` reacts to the events it returns — deliberately split into
 **alerts** (should interrupt/notify the caregiver) and a **live update**
 (should refresh an already-visible session without a new alert):
 
-- **`"started"` (alert → `notify_cry_started`)**: fires on the first
-  confidently-"cry" window after being idle.
+- **`"started"` (alert → `notify_cry_started`)**: fires once
+  `settings.SESSION_START_MIN_WINDOWS` *consecutive* confidently-"cry"
+  windows have been seen (derived from `SESSION_START_MIN_SECONDS`, default
+  6s of confirmation — see `settings.py`). A single confident-but-wrong
+  window (a bark, a static burst, anything that briefly clears
+  `STAGE1_CONFIDENCE_THRESHOLD`) used to be enough on its own to fire a
+  full alert; requiring a short consecutive run first filters that out at
+  the cost of a few seconds of alert latency. Before confirmation, the
+  candidate is in a `PENDING` sub-state: any confident NON-cry window
+  before it's confirmed discards the candidate entirely (deliberately
+  stricter than the merge window below — an unconfirmed candidate has no
+  track record yet, so one interruption means "that wasn't really a cry").
+  The confirmed session's `started_at_utc` is backdated to the *first*
+  window of the confirmed run, not the confirming one, so logged/reported
+  start times reflect when the crying actually began.
 - **`"reason_updated"` (live update → `send_reason_update`, NOT an alert)**:
   fires mid-session whenever the aggregated cry-reason estimate's
   top-ranked label changes (e.g. the running average flips from "fussy"
@@ -118,21 +131,47 @@ default 4s interval would otherwise be ~75 notifications).
   field on the session already on screen. Does not fire on every window —
   only when the top reason actually changes, so a long stable stretch of
   "hungry" leading doesn't spam repeat updates.
-- **`"ended"` (alert → `notify_cry_ended`)**: fires after
-  `settings.SESSION_END_GRACE_WINDOWS` (default 2) *consecutive* confident
-  non-cry windows — a brief pause/gasp mid-cry shouldn't immediately end
-  the session and cause a spurious end+restart pair.
-- **"uncertain" windows during an active session don't end it** (ambiguous
-  isn't evidence the baby stopped — matches the project's stated
-  preference for false positives over false negatives), don't start a new
-  session on their own, and (since stage 2 doesn't run on "uncertain"
-  windows) don't contribute to the aggregated reason either.
+- **`"ended"` (alert → `notify_cry_ended`)**: fires once
+  `settings.SESSION_MERGE_WINDOW_SECONDS` (default 10 minutes) have passed
+  since the *last* confidently-"cry" window. Until that gap elapses, any
+  further confident "cry" — even minutes later — is folded into the SAME
+  session rather than starting a new one: the session's `started_at_utc`
+  stays the original start, and stage-2 aggregation keeps accumulating.
+  This is deliberately time-based rather than a small fixed count of
+  windows, to cover the case where the baby (still crying) is picked up
+  and carried away from the monitor's mic, or just settles and cries again
+  a few minutes later — a short grace window reliably miscounted that as
+  two separate episodes (a false "ended" immediately followed by a false
+  "started"). The session's logged `duration_seconds`/end time reflect the
+  *last confident cry*, not whenever the merge window happens to lapse —
+  a 5-minute cry followed by 8 minutes of silence logs as a 5-minute
+  session, not 13. See Notifications below for why "ended" is alerted
+  despite firing well after the fact.
+- **"uncertain" windows never discard a `PENDING` candidate or end/extend
+  a confirmed session's merge-window gap** (ambiguous isn't evidence the
+  baby stopped, but isn't confirmation it's still crying either — matches
+  the project's stated preference for false positives over false
+  negatives), don't confirm/start a session on their own, and (since
+  stage 2 doesn't run on "uncertain" windows) don't contribute to the
+  aggregated reason either.
+
+**Cry density**: because a confirmed session can now span a multi-minute
+quiet gap (absorbed by the merge window above), `duration_seconds` alone
+can no longer distinguish "12 minutes, wall-to-wall crying" from "12
+minutes, but only 90s of it was confirmed crying, the rest was an absorbed
+gap." `session.confirmed_cry_seconds` (confident-"cry" window count ×
+`CAPTURE_INTERVAL_SECONDS` — an approximation, not a precise audio-level
+measurement) and `session.cry_density` (that, as a 0.0–1.0 ratio to
+`duration_seconds`) capture that distinction. Both are included in the
+`reason_updated` and `cry_ended` payloads and in `cry_history.py` rows —
+see Notifications and Cry history below.
 
 **Stage-2 (cry-reason) predictions are aggregated across the session** as a
 running average of probability vectors (`session.aggregated_stage2_probs`),
-sent with both the `reason_updated` live update and the final `cry_ended`
-alert, rather than just whichever window happened to trigger the start
-alert. The reasoning: each window's stage-2 output is a noisy sample, and
+sent with the `reason_updated` live update and persisted to
+`cry_history.py` when the session finally closes, rather than just
+whichever window happened to trigger the start alert. The reasoning: each
+window's stage-2 output is a noisy sample, and
 averaging many samples from the same episode should reduce that noise —
 but this is **unverified** against real multi-window sessions or against
 systematic (non-random) error in the model. Some of stage 2's known
@@ -144,7 +183,7 @@ exists, not an assumed improvement.
 
 ## Notifications
 
-`notify.py` publishes every alert/live-update from Session tracking above
+`notify.py` publishes the alerts and live-update from Session tracking above
 to the app over MQTT, on the same local Mosquitto broker `buttons_mqtt.py`
 already uses for button presses (`settings.MQTT_NOTIFY_TOPIC`, a
 different topic from the button one — same broker, distinct message
@@ -181,16 +220,35 @@ notification. Practically, that means:
  "stage2_probs": {...}, "context": {"seconds_since_feed": 1820.4, "seconds_since_change": null}}
 
 {"event": "reason_updated", "timestamp": "...", "duration_seconds": 42.1,
- "aggregated_stage2_probs": {...}, "context": {...}}
+ "aggregated_stage2_probs": {...}, "confirmed_cry_seconds": 38.0,
+ "cry_density": 0.903, "context": {...}}
 
 {"event": "cry_ended",      "timestamp": "...", "duration_seconds": 96.3,
- "aggregated_stage2_probs": {...}, "context": {...}}
+ "aggregated_stage2_probs": {...}, "confirmed_cry_seconds": 52.0,
+ "cry_density": 0.54, "context": {...}}
 ```
 `"context"` (time since last feed/diaper change) is deliberately kept
 separate from the model's probabilities in every payload — see the note
 under Session tracking / Care events for why (no labeled data yet to
 learn a real fusion rule; shown as plain context for the caregiver to
 reason about, not blended into the prediction).
+
+`"confirmed_cry_seconds"`/`"cry_density"` (see Session tracking's "Cry
+density" above) appear on `reason_updated` and `cry_ended` but not
+`cry_started` — at a fresh "started" there's only ever been confirmed
+crying so far, so `cry_density` would trivially read `1.0` and add nothing.
+
+**Why "cry ended" is still alerted despite firing late.** `"ended"` fires
+up to `settings.SESSION_MERGE_WINDOW_SECONDS` (default 10 min) after the
+caregiver likely already knows about and has dealt with the cry — worth
+calling out because it might look like it should just be a live update
+like `reason_updated`. It's kept as a real alert specifically so the app
+has a reliable, unambiguous signal to stop showing an active-session
+UI/alert state on its own — without it, an app that isn't independently
+timing out that UI (or one whose caregiver put the phone down mid-session
+and never saw a later state change) would show "crying now" indefinitely.
+Treat it as lower-urgency than `cry_started` in UI/sound choices if that
+distinction matters to the app (see `PI_CONTRACT.md` in the app repo).
 
 **Published with `retain=True`.** The broker holds the most recent
 message on this topic and delivers it immediately to any client that
@@ -270,14 +328,28 @@ loops that both touch `care_events.sqlite`.
 ## Cry history
 
 `cry_history.py` persists every completed crying session locally
-(`cry_history.sqlite`) — start time, end time, duration, and the
-session's final aggregated cry-reason estimate (`session.
-aggregated_stage2_probs` at the moment it ended, both the top label and
-the full probability breakdown). `monitor.py` calls `log_session()` right
-after handling the `"ended"` event, using `session.started_at_utc` (a
-real timestamp — distinct from `session.started_at`/`duration_seconds`,
-which use `time.monotonic()` and are only meaningful for measuring
-elapsed time, not as an absolute clock time).
+(`cry_history.sqlite`) — start time, end time, duration, the session's
+final aggregated cry-reason estimate (`session.aggregated_stage2_probs` at
+the moment it ended, both the top label and the full probability
+breakdown), and `confirmed_cry_seconds`/`cry_density` (see Session
+tracking's "Cry density" above). `monitor.py` calls `log_session()` right
+after handling the `"ended"` event, using `session.started_at_utc` and
+`session.last_cry_at_utc` (real timestamps — distinct from
+`session.started_at`/`duration_seconds`, which use `time.monotonic()` and
+are only meaningful for measuring elapsed time, not as an absolute clock
+time). **The logged end time is the LAST confident cry in the episode**,
+not whenever `"ended"` actually fired — since a session can now sit open
+for up to `settings.SESSION_MERGE_WINDOW_SECONDS` of trailing silence
+waiting to see if crying resumes (see Session tracking above), using "now"
+as the end time would inflate every session's duration by however long
+that trailing silence happened to be.
+
+`confirmed_cry_seconds` was added after the table already existed in the
+field, so `_migrate_add_confirmed_cry_seconds()` runs an `ALTER TABLE` on
+every `_connect()` (a no-op once already applied, checked against the live
+schema first) rather than assuming a fresh `CREATE TABLE IF NOT EXISTS` —
+existing `cry_history.sqlite` files on deployed Pis need to pick up the
+new column without losing their history.
 
 Scoped deliberately narrow, per-request:
 - **Only completed cry sessions are stored** — not individual
@@ -350,11 +422,14 @@ window:
   writes to `care_events.sqlite` independently of `monitor.py` and
   doesn't touch `prediction_state.py` at all — feed/change logging keeps
   working normally while paused.
-- **An in-progress crying session is force-ended when pause takes
-  effect**, rather than left open indefinitely (nothing would ever call
-  `session.update()` again to close it otherwise). This still fires
-  `notify_cry_ended` and logs to `cry_history.py` normally, just tagged
-  internally as ended due to pause rather than the model losing the cry.
+- **A CONFIRMED in-progress crying session is force-ended (and alerted,
+  and logged) when pause takes effect**, rather than left open
+  indefinitely (nothing would ever call `session.update()` again to close
+  it otherwise) — same `notify_cry_ended` + `cry_history.py` logging as a
+  normal merge-window "ended", just tagged internally as ended due to
+  pause. **An unconfirmed (`PENDING`) candidate is silently discarded
+  instead** — it was never alerted or logged in the first place (see
+  Session tracking above), so there's nothing to close out.
 - Same polling-latency caveat as the `SIGTERM` handling: pause/resume
   takes effect on the next captured window, up to
   `settings.CAPTURE_INTERVAL_SECONDS` after the app's request.
