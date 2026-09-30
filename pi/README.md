@@ -132,8 +132,9 @@ default 4s interval would otherwise be ~75 notifications).
   only when the top reason actually changes, so a long stable stretch of
   "hungry" leading doesn't spam repeat updates.
 - **`"ended"` (alert → `notify_cry_ended`)**: fires once
-  `settings.SESSION_MERGE_WINDOW_SECONDS` (default 10 minutes) have passed
-  since the *last* confidently-"cry" window. Until that gap elapses, any
+  `session_end_missed_windows` consecutive non-cry windows (app-tunable;
+  default derived from `settings.SESSION_MERGE_WINDOW_SECONDS`, 10 minutes)
+  have passed since the *last* confidently-"cry" window. Until that gap elapses, any
   further confident "cry" — even minutes later — is folded into the SAME
   session rather than starting a new one: the session's `started_at_utc`
   stays the original start, and stage-2 aggregation keeps accumulating.
@@ -468,6 +469,11 @@ GET  /device_events?since=<ISO8601> pull startup/shutdown events since a given
 GET  /prediction_state              current paused/active state
 POST /prediction_state              {"paused": true|false} -- pause/resume
                                      inference, see Pausing predictions above
+GET  /detection_settings            {"stage1_confidence_threshold", "session_start_min_windows",
+                                     "session_end_missed_windows"} -- current values
+POST /detection_settings            partial update of those keys (returns all three);
+                                     {"reset": true} restores settings.py defaults.
+                                     Takes effect on the next captured window.
 POST /reset                         {"confirm": "RESET"} -- wipes all stored
                                      history, see Database reset below
 ```

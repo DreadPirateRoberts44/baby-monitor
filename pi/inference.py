@@ -123,17 +123,20 @@ class CryPredictor:
         embedding = self.yamnet.run(filtered)
         return np.asarray(embedding, dtype=np.float32).reshape(-1)
 
-    def predict_stage1(self, embedding):
-        """Returns (label, confidence, probs_dict). label is
-        settings.UNCERTAIN_LABEL if confidence < STAGE1_CONFIDENCE_THRESHOLD."""
+    def predict_stage1(self, embedding, threshold=None):
+        """Returns (label, confidence, probs_dict, top_label). label is
+        settings.UNCERTAIN_LABEL if confidence < threshold (default
+        settings.STAGE1_CONFIDENCE_THRESHOLD); top_label is always the
+        highest-probability class, for diagnostics."""
+        if threshold is None:
+            threshold = settings.STAGE1_CONFIDENCE_THRESHOLD
         probs = self.stage1_model.run(embedding[None, :])[0]
         top_idx = int(np.argmax(probs))
         confidence = float(probs[top_idx])
-        label = self.stage1_labels[top_idx]
-        if confidence < settings.STAGE1_CONFIDENCE_THRESHOLD:
-            label = settings.UNCERTAIN_LABEL
+        top_label = self.stage1_labels[top_idx]
+        label = top_label if confidence >= threshold else settings.UNCERTAIN_LABEL
         probs_dict = dict(zip(self.stage1_labels, (float(p) for p in probs)))
-        return label, confidence, probs_dict
+        return label, confidence, probs_dict, top_label
 
     def predict_stage2(self, embedding):
         """Returns a dict of {label: probability}, sorted descending. Only
@@ -145,17 +148,20 @@ class CryPredictor:
         probs_dict = dict(zip(self.stage2_labels, (float(p) for p in probs)))
         return dict(sorted(probs_dict.items(), key=lambda kv: kv[1], reverse=True))
 
-    def predict(self, waveform):
+    def predict(self, waveform, threshold=None):
         """Full pipeline for one captured window. Returns a result dict:
           {
             "stage1_label": str,        # class name, or settings.UNCERTAIN_LABEL
+            "stage1_top_label": str,    # highest-probability class even when uncertain
             "stage1_confidence": float,
             "stage1_probs": {label: prob, ...},
             "stage2_probs": {label: prob, ...} or None,  # None unless stage1_label == "cry"
           }
         """
         raw_embedding = self.embed_raw(waveform)
-        stage1_label, stage1_confidence, stage1_probs = self.predict_stage1(raw_embedding)
+        stage1_label, stage1_confidence, stage1_probs, stage1_top_label = self.predict_stage1(
+            raw_embedding, threshold
+        )
 
         stage2_probs = None
         if stage1_label == settings.CRY_LABEL:
@@ -164,6 +170,7 @@ class CryPredictor:
 
         return {
             "stage1_label": stage1_label,
+            "stage1_top_label": stage1_top_label,
             "stage1_confidence": stage1_confidence,
             "stage1_probs": stage1_probs,
             "stage2_probs": stage2_probs,

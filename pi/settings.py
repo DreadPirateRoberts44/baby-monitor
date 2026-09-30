@@ -32,9 +32,11 @@ STAGE1_LABELS_PATH = os.path.join(MODEL_DIR, "labels.txt")
 STAGE2_TFLITE_PATH = os.path.join(MODEL_DIR, "cry_reason_mlp.tflite")
 STAGE2_LABELS_PATH = os.path.join(MODEL_DIR, "cry_reason_labels.txt")
 
-# Must match config.CONFIDENCE_THRESHOLD / config.UNCERTAIN_LABEL. See
-# calibrate_threshold.py at the repo root for how this was chosen.
-STAGE1_CONFIDENCE_THRESHOLD = 0.90
+# Default stage-1 confidence threshold; the app can override it at runtime
+# (see detection_settings.py). Lowered from the training-side
+# config.CONFIDENCE_THRESHOLD (0.90) after testing with real audio on the Pi.
+# See calibrate_threshold.py at the repo root for how 0.90 was chosen.
+STAGE1_CONFIDENCE_THRESHOLD = 0.85
 UNCERTAIN_LABEL = "uncertain"
 
 # Stage 1 label that means "run stage 2 next".
@@ -79,6 +81,11 @@ SESSION_START_MIN_SECONDS = 6.0
 # always at least 1, so SESSION_START_MIN_SECONDS <= CAPTURE_INTERVAL_SECONDS
 # still means "the very first window is enough", matching the old behavior.
 SESSION_START_MIN_WINDOWS = max(1, math.ceil(SESSION_START_MIN_SECONDS / CAPTURE_INTERVAL_SECONDS))
+
+# Derived default: how many CONSECUTIVE non-cry windows (including
+# "uncertain") end a confirmed session. The app can override this at runtime
+# (see detection_settings.py).
+SESSION_END_MISSED_WINDOWS = max(1, math.ceil(SESSION_MERGE_WINDOW_SECONDS / CAPTURE_INTERVAL_SECONDS))
 
 # Wireless button device (ESP32, see firmware/ and buttons_mqtt.py) for
 # logging feed/diaper-change events used by care_events.py. The Pi runs

@@ -41,6 +41,7 @@ from cry_history import log_session
 from device_events import log_event as log_device_event, STARTUP, SHUTDOWN
 from inference import CryPredictor
 from notify import notify_cry_started, notify_cry_ended, send_reason_update
+from detection_settings import get_settings
 from prediction_state import is_paused
 from session import CrySession, CRYING, PENDING
 
@@ -112,20 +113,28 @@ def run():
             print("Predictions resumed.")
             was_paused = False
 
+        tuning = get_settings()
         t0 = time.monotonic()
-        result = predictor.predict(waveform)
+        result = predictor.predict(waveform, threshold=tuning["stage1_confidence_threshold"])
         elapsed = time.monotonic() - t0
 
-        summary = f"{result['stage1_label']} (conf {result['stage1_confidence']:.2f}, {elapsed * 1000:.0f}ms)"
+        label = result["stage1_label"]
+        if label == settings.UNCERTAIN_LABEL:
+            label += f" [top: {result['stage1_top_label']}]"
+        summary = f"{label} (conf {result['stage1_confidence']:.2f}, {elapsed * 1000:.0f}ms)"
         if result["stage2_probs"]:
             top_reason = next(iter(result["stage2_probs"]))
             summary += f" -> reason: {top_reason} ({result['stage2_probs'][top_reason]:.2f})"
         print(summary)
 
-        event = session.update(result)
+        event = session.update(
+            result,
+            start_min_windows=tuning["session_start_min_windows"],
+            end_missed_windows=tuning["session_end_missed_windows"],
+        )
         if event == "started":
             print(f"  >> cry session started (confirmed after "
-                  f"{settings.SESSION_START_MIN_WINDOWS} consecutive cry window(s))")
+                  f"{tuning['session_start_min_windows']} consecutive cry window(s))")
             notify_cry_started(result)
         elif event == "reason_updated":
             print(f"  >> reason estimate updated: {session.aggregated_stage2_probs}")

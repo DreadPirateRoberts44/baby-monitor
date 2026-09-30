@@ -36,6 +36,14 @@ Endpoints:
                                                   app-controlled escape hatch
                                                   for a misbehaving model;
                                                   see prediction_state.py
+  GET    /detection_settings                 -- current tunables
+                                                  (detection_settings.py)
+  POST   /detection_settings                 -- partial update of
+                                                  stage1_confidence_threshold,
+                                                  session_start_min_windows,
+                                                  session_end_missed_windows;
+                                                  {"reset": true} restores
+                                                  defaults
   POST   /reset                              -- {"confirm": "RESET"} --
                                                   wipes care_events,
                                                   cry_history, and
@@ -82,6 +90,7 @@ from urllib.parse import urlparse, parse_qs
 
 import care_events
 import cry_history
+import detection_settings
 import device_events
 import prediction_state
 import reset_db
@@ -173,11 +182,15 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"paused": prediction_state.is_paused()})
             return
 
+        if parsed.path == "/detection_settings":
+            self._send_json(200, detection_settings.get_settings())
+            return
+
         self._send_json(404, {"error": "not found"})
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path not in ("/care_events", "/prediction_state", "/reset"):
+        if parsed.path not in ("/care_events", "/prediction_state", "/detection_settings", "/reset"):
             self._send_json(404, {"error": "not found"})
             return
 
@@ -197,6 +210,17 @@ class SyncRequestHandler(BaseHTTPRequestHandler):
                 return
             counts = reset_db.reset_all()
             self._send_json(200, {"status": "reset", "deleted": counts})
+            return
+
+        if parsed.path == "/detection_settings":
+            if body == {"reset": True}:
+                self._send_json(200, detection_settings.reset_settings())
+                return
+            error = detection_settings.validate(body)
+            if error:
+                self._send_json(400, {"error": error})
+                return
+            self._send_json(200, detection_settings.set_settings(body))
             return
 
         if parsed.path == "/prediction_state":

@@ -15,8 +15,9 @@ track record yet, so a single interruption is treated as "that wasn't
 really a cry" rather than "brief pause mid-cry".
 
 Once confirmed, a session stays open across gaps of up to
-settings.SESSION_MERGE_WINDOW_SECONDS since the last confident "cry"
-window -- e.g. baby cries, is picked up and carried out of mic range (or
+end_missed_windows consecutive non-cry windows (default
+settings.SESSION_END_MISSED_WINDOWS, ~SESSION_MERGE_WINDOW_SECONDS)
+since the last confident "cry" window -- e.g. baby cries, is picked up and carried out of mic range (or
 just settles down), then cries again 10 minutes later: that's folded into
 the SAME session rather than starting a new one and firing a second
 "started" alert for what's really one episode. Only a confident "cry"
@@ -115,6 +116,7 @@ class CrySession:
                                       # this, not "now", is the session's real end time
         self._pending_streak = 0     # consecutive confident-"cry" windows seen so far
                                       # while state == PENDING, toward SESSION_START_MIN_WINDOWS
+        self._missed_streak = 0      # consecutive non-cry windows while CRYING
         self._cry_window_count = 0   # confident-"cry" windows in the CONFIRMED session so
                                       # far -- see confirmed_cry_seconds/cry_density
         self._stage2_prob_sum = {}
@@ -193,17 +195,28 @@ class CrySession:
         self.last_cry_at = None
         self.last_cry_at_utc = None
         self._pending_streak = 0
+        self._missed_streak = 0
         self._cry_window_count = 0
         self._stage2_prob_sum = {}
         self._stage2_sample_count = 0
         self._last_reported_top_reason = None
 
-    def update(self, result):
+    def update(self, result, start_min_windows=None, end_missed_windows=None):
         """result: the dict returned by inference.CryPredictor.predict().
         Returns "started", "reason_updated", "ended", or None. On "ended",
         duration_seconds and aggregated_stage2_probs still reflect the
         just-finished session -- read them before the next update() call,
-        which starts clearing state for the next (potential) session."""
+        which starts clearing state for the next (potential) session.
+
+        start_min_windows / end_missed_windows override the settings.py
+        defaults (monitor.py passes the app-tunable values from
+        detection_settings.py each call). A confirmed session ends after
+        end_missed_windows CONSECUTIVE non-cry windows, "uncertain"
+        included."""
+        if start_min_windows is None:
+            start_min_windows = settings.SESSION_START_MIN_WINDOWS
+        if end_missed_windows is None:
+            end_missed_windows = settings.SESSION_END_MISSED_WINDOWS
         label = result["stage1_label"]
         # "uncertain" doesn't reset an active/pending session (ambiguous,
         # not evidence the baby stopped) but also doesn't start or confirm
@@ -214,7 +227,7 @@ class CrySession:
         if self.state == IDLE:
             if is_cry:
                 self._begin_candidate(result)
-                if settings.SESSION_START_MIN_WINDOWS <= 1:
+                if start_min_windows <= 1:
                     return self._confirm()
                 self.state = PENDING
             return None
@@ -222,7 +235,7 @@ class CrySession:
         if self.state == PENDING:
             if is_cry:
                 self._extend_candidate(result)
-                if self._pending_streak >= settings.SESSION_START_MIN_WINDOWS:
+                if self._pending_streak >= start_min_windows:
                     return self._confirm()
                 return None
             if label == settings.UNCERTAIN_LABEL:
@@ -240,6 +253,7 @@ class CrySession:
         # self.state == CRYING (confirmed)
         if is_cry:
             self._extend_candidate(result)
+            self._missed_streak = 0
             current_top = self._top_reason()
             if current_top is not None and current_top != self._last_reported_top_reason:
                 self._last_reported_top_reason = current_top
@@ -247,9 +261,10 @@ class CrySession:
             return None
 
         # Not a confident "cry" this window (includes "uncertain") -- the
-        # session stays open, silently, until the gap since the last
-        # confident cry crosses the merge window.
-        if time.monotonic() - self.last_cry_at >= settings.SESSION_MERGE_WINDOW_SECONDS:
+        # session stays open, silently, until end_missed_windows
+        # consecutive such windows have passed.
+        self._missed_streak += 1
+        if self._missed_streak >= end_missed_windows:
             self.state = IDLE  # leaves started_at/last_cry_at/aggregated probs
                                 # readable until next update() or clear()
             return "ended"
