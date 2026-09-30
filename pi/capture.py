@@ -3,21 +3,47 @@ inference. Uses sounddevice (PortAudio bindings) -- works with a USB mic or
 an I2S mic exposed as a standard ALSA input device on the Pi, and is
 cross-platform enough to test on a dev machine with any working microphone.
 """
+from math import gcd
+
 import numpy as np
 import sounddevice as sd
+from scipy.signal import resample_poly
 
 import settings
+
+# Many USB mics only open at 44.1/48 kHz through ALSA; cache the rate that
+# worked so the fallback probe runs once, not every window.
+_native_rate_cache = {}
+
+
+def _record(n_samples, rate, device):
+    recording = sd.rec(n_samples, samplerate=rate, channels=1, dtype="float32", device=device)
+    sd.wait()
+    return recording.reshape(-1)
 
 
 def capture_window(duration_seconds=settings.DURATION_SECONDS, sample_rate=settings.SAMPLE_RATE,
                     device=settings.AUDIO_DEVICE):
     """Blocks until duration_seconds of audio has been recorded, returns a
     1-D float32 array of exactly round(duration_seconds * sample_rate)
-    samples, mono."""
+    samples, mono. If the device can't open at sample_rate, records at its
+    native rate and resamples."""
     n_samples = int(round(duration_seconds * sample_rate))
-    recording = sd.rec(n_samples, samplerate=sample_rate, channels=1, dtype="float32", device=device)
-    sd.wait()
-    return recording.reshape(-1)
+    rate = _native_rate_cache.get(device, sample_rate)
+    if rate == sample_rate:
+        try:
+            return _record(n_samples, sample_rate, device)
+        except sd.PortAudioError:
+            rate = int(sd.query_devices(device, "input")["default_samplerate"])
+            if rate == sample_rate:
+                raise
+            _native_rate_cache[device] = rate
+    raw = _record(int(round(duration_seconds * rate)), rate, device)
+    g = gcd(int(rate), int(sample_rate))
+    out = resample_poly(raw, int(sample_rate) // g, int(rate) // g).astype(np.float32)
+    if len(out) < n_samples:
+        out = np.pad(out, (0, n_samples - len(out)))
+    return out[:n_samples]
 
 
 def iter_windows(interval_seconds=settings.CAPTURE_INTERVAL_SECONDS,
