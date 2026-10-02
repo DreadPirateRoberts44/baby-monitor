@@ -52,6 +52,7 @@
  */
 
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -119,12 +120,39 @@ void runSetupPortal() {
   }
 }
 
+// Resolves MQTT_BROKER_HOST (a literal IP, or an mDNS name with or without
+// ".local") to an address. PubSubClient's own hostname lookup goes through
+// generic DNS, which is unreliable for .local names on the ESP32, so mDNS is
+// queried directly. Re-resolved on every connect attempt so the broker is
+// found again after the device moves to a different network.
+bool resolveBroker(IPAddress& out) {
+  if (out.fromString(MQTT_BROKER_HOST)) return true;
+
+  static bool mdnsStarted = false;
+  if (!mdnsStarted) {
+    mdnsStarted = MDNS.begin(DEVICE_ID);
+  }
+
+  String name = MQTT_BROKER_HOST;
+  if (name.endsWith(".local")) name.remove(name.length() - 6);
+
+  out = MDNS.queryHost(name, 2000);
+  return out != IPAddress((uint32_t)0);
+}
+
 void connectMQTT() {
   if (mqttClient.connected()) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  mqttClient.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
-  Serial.printf("Connecting to MQTT broker %s:%d...\n", MQTT_BROKER_HOST, MQTT_BROKER_PORT);
+  IPAddress brokerIp;
+  if (!resolveBroker(brokerIp)) {
+    Serial.printf("Could not resolve MQTT broker \"%s\" (will retry)\n", MQTT_BROKER_HOST);
+    return;
+  }
+
+  mqttClient.setServer(brokerIp, MQTT_BROKER_PORT);
+  Serial.printf("Connecting to MQTT broker %s (%s):%d...\n",
+                MQTT_BROKER_HOST, brokerIp.toString().c_str(), MQTT_BROKER_PORT);
 
   if (mqttClient.connect(DEVICE_ID)) {
     Serial.println("MQTT connected");

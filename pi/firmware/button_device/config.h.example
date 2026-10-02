@@ -21,14 +21,12 @@
 // reset -- doesn't affect normal reconnects to an already-known network.
 #define WIFI_PORTAL_TIMEOUT_S 180
 
-// The Pi's address on the local network. A plain IP (e.g. "192.168.1.42")
-// works but can change if the Pi's DHCP lease renews with a different
-// address -- setting a static/reserved IP for the Pi in your router's
-// settings is recommended so this never needs updating. Alternatively,
-// if your router supports mDNS/.local hostnames and the Pi has avahi
-// running (default on Raspberry Pi OS), "raspberrypi.local" often works
-// without any router configuration -- try it first, fall back to a
-// static IP if it's unreliable on your network.
+// The Pi's mDNS hostname (or a literal IP). The device looks this up over
+// mDNS on every connect, so it keeps working after moving to a different
+// WiFi network with no reconfiguration -- as long as the Pi is on the same
+// network and its hostname matches (default "raspberrypi"; check with
+// `hostname` on the Pi). A literal IP also works but must be updated (and
+// re-flashed) whenever the network changes.
 #define MQTT_BROKER_HOST "raspberrypi.local"
 #define MQTT_BROKER_PORT 1883
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Advertises the sync API so the app can find the Pi by service type,
+     independent of hostname or IP. Install per docs/INSTALL.md 1.9. -->
+<service-group>
+  <name replace-wildcards="yes">Baby Monitor (%h)</name>
+  <service>
+    <type>_babymonitor._tcp</type>
+    <port>8081</port>
+  </service>
+</service-group>
